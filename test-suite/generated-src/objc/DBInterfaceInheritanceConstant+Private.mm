@@ -43,10 +43,11 @@ namespace djinni_generated {
 
 class InterfaceInheritanceConstant::ObjcProxy final
 : public ::testsuite::InterfaceInheritanceConstant
-, public ::djinni::ObjcProxyCache::Handle<ObjcType>
+, private ::djinni::ObjcProxyBase<ObjcType>
 {
+    friend class ::djinni_generated::InterfaceInheritanceConstant;
 public:
-    using Handle::Handle;
+    using ObjcProxyBase::ObjcProxyBase;
 
     // InterfaceInheritanceConstant methods
 };
@@ -72,7 +73,7 @@ auto InterfaceInheritanceConstant::fromCppOpt(const CppOptType& cpp) -> ObjcType
         return nil;
     }
     if (auto cppPtr = dynamic_cast<ObjcProxy*>(cpp.get())) {
-        return cppPtr->Handle::get();
+        return cppPtr->djinni_private_get_proxied_objc_object();
     }
     return ::djinni::get_cpp_proxy<DBInterfaceInheritanceConstantCppProxy>(cpp);
 }

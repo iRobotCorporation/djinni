@@ -49,16 +49,17 @@ namespace djinni_generated {
 
 class UserToken::ObjcProxy final
 : public ::testsuite::UserToken
-, public ::djinni::ObjcProxyCache::Handle<ObjcType>
+, private ::djinni::ObjcProxyBase<ObjcType>
 {
+    friend class ::djinni_generated::UserToken;
 public:
-    using Handle::Handle;
+    using ObjcProxyBase::ObjcProxyBase;
 
     // UserToken methods
     std::string whoami() override
     {
         @autoreleasepool {
-            auto objcpp_result_ = [Handle::get() whoami];
+            auto objcpp_result_ = [djinni_private_get_proxied_objc_object() whoami];
             return ::djinni::String::toCpp(objcpp_result_);
         }
     }
@@ -85,7 +86,7 @@ auto UserToken::fromCppOpt(const CppOptType& cpp) -> ObjcType
         return nil;
     }
     if (auto cppPtr = dynamic_cast<ObjcProxy*>(cpp.get())) {
-        return cppPtr->Handle::get();
+        return cppPtr->djinni_private_get_proxied_objc_object();
     }
     return ::djinni::get_cpp_proxy<DBUserTokenCppProxy>(cpp);
 }
