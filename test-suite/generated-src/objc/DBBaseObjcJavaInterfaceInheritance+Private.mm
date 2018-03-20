@@ -13,23 +13,24 @@ namespace djinni_generated {
 
 class BaseObjcJavaInterfaceInheritance::ObjcProxy final
 : public ::testsuite::BaseObjcJavaInterfaceInheritance
-, public ::djinni::ObjcProxyCache::Handle<ObjcType>
+, private ::djinni::ObjcProxyBase<ObjcType>
 {
+    friend class ::djinni_generated::BaseObjcJavaInterfaceInheritance;
 public:
-    using Handle::Handle;
+    using ObjcProxyBase::ObjcProxyBase;
 
     // BaseObjcJavaInterfaceInheritance methods
     std::string base_method() override
     {
         @autoreleasepool {
-            auto objcpp_result_ = [Handle::get() baseMethod];
+            auto objcpp_result_ = [djinni_private_get_proxied_objc_object() baseMethod];
             return ::djinni::String::toCpp(objcpp_result_);
         }
     }
     std::string override_method() override
     {
         @autoreleasepool {
-            auto objcpp_result_ = [Handle::get() overrideMethod];
+            auto objcpp_result_ = [djinni_private_get_proxied_objc_object() overrideMethod];
             return ::djinni::String::toCpp(objcpp_result_);
         }
     }
@@ -52,7 +53,7 @@ auto BaseObjcJavaInterfaceInheritance::fromCppOpt(const CppOptType& cpp) -> Objc
     if (!cpp) {
         return nil;
     }
-    return dynamic_cast<ObjcProxy&>(*cpp).Handle::get();
+    return dynamic_cast<ObjcProxy&>(*cpp).djinni_private_get_proxied_objc_object();
 }
 
 }  // namespace djinni_generated

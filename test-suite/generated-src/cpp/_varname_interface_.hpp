@@ -41,6 +41,11 @@ public:
      */
     virtual const std::string objcProxyClassName() { return "DBVarnameInterface"; }
 
+    /**
+     * We should also rewrite parameter names in docstrings.
+     * _r_arg_ should be rewritten.
+     * _i_arg_ should not.
+     */
     virtual VarnameRecord _rmethod_(const VarnameRecord & _r_arg_) = 0;
 
     virtual std::shared_ptr<VarnameInterface> _imethod_(const std::shared_ptr<VarnameInterface> & _i_arg_) = 0;

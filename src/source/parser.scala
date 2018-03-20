@@ -16,7 +16,7 @@
 
 package djinni
 
-import java.io.{File, InputStreamReader, FileInputStream, Writer}
+import java.io.{File, FileNotFoundException, InputStreamReader, FileInputStream, Writer}
 
 import djinni.ast.Interface.Method
 import djinni.ast.Record.DerivingType.DerivingType
@@ -26,10 +26,11 @@ import java.util.{Map => JMap}
 import org.yaml.snakeyaml.Yaml
 import scala.collection.JavaConversions._
 import scala.collection.mutable
+import scala.util.control.Breaks._
 import scala.util.parsing.combinator.RegexParsers
 import scala.util.parsing.input.{Position, Positional}
 
-case class Parser() {
+case class Parser(includePaths: List[String]) {
 
 val visitedFiles = mutable.Set[File]()
 val fileStack = mutable.Stack[File]()
@@ -37,23 +38,35 @@ val fileStack = mutable.Stack[File]()
 private object IdlParser extends RegexParsers {
   override protected val whiteSpace = """[ \t\n\r]+""".r
 
-  def idlFile(origin: String): Parser[IdlFile] = rep(importFile) ~ rep(typeDecl(origin)) ^^ { case imp~types => IdlFile(imp, types) }
+  def idlFile(origin: String): Parser[IdlFile] = rep(importFileRef) ~ rep(typeDecl(origin)) ^^ { case imp~types => IdlFile(imp, types) }
 
-  def importFile: Parser[FileRef] = {
-
-    def fileParent:String = if (fileStack.top.getParent() != null) return fileStack.top.getParent() + "/" else return ""
-
+  def importFileRef(): Parser[FileRef] = {
     ("@" ~> directive) ~ ("\"" ~> filePath <~ "\"") ^^ {
-      case "import" ~ x =>
-        val newPath = fileParent + x
-
-        def importFile = new File(newPath)
-        new IdlFileRef(importFile.getCanonicalFile)
-      case "extern" ~ x =>
-        val newPath = fileParent + x
-        new ExternFileRef(new File(newPath))
+      case "import" ~ x => {
+        new IdlFileRef(importFile(x))
+      }
+      case "extern" ~ x => {
+        new ExternFileRef(importFile(x))
+      }
     }
   }
+
+  def importFile(fileName: String): File = {
+    var file: Option[File] = None
+
+    val path = includePaths.find(path => {
+      val relPath = if (path.isEmpty) fileStack.top.getParent() else path
+      val tmp = new File(relPath, fileName)
+      val exists = tmp.exists
+      if (exists) file = Some(tmp)
+      exists
+    })
+
+    if (file.isEmpty) throw new FileNotFoundException("Unable to find file \"" + fileName + "\" at " + fileStack.top.getCanonicalPath)
+
+    return file.get
+  }
+
   def filePath = "[^\"]*".r
 
   def directive = importDirective | externDirective
@@ -92,7 +105,7 @@ private object IdlParser extends RegexParsers {
     success(Ext(foundJava, foundCpp, foundObjc))
   }
 
-  def typeDef: Parser[TypeDef] = record | enum | interface | interfaceExtends
+  def typeDef: Parser[TypeDef] = record | enum | flags | interface | interfaceExtends
 
   def recordHeader = "record" ~> extRecord
   def record: Parser[Record] = recordHeader ~ bracesList(field | const) ~ opt(deriving) ^^ {
@@ -110,14 +123,30 @@ private object IdlParser extends RegexParsers {
     _.map(ident => ident.name match {
       case "eq" => Record.DerivingType.Eq
       case "ord" => Record.DerivingType.Ord
+      case "parcelable" => Record.DerivingType.AndroidParcelable
       case _ => return err( s"""Unrecognized deriving type "${ident.name}"""")
     }).toSet
   }
 
+  def flagsAll = "all".r
+  def flagsNone = "none".r
+
   def enumHeader = "enum".r
-  def enum: Parser[Enum] = enumHeader ~> bracesList(enumOption) ^^ Enum.apply
+  def flagsHeader = "flags".r
+  def enum: Parser[Enum] = enumHeader ~> bracesList(enumOption) ^^ {
+    case items => Enum(items, false)
+  }
+  def flags: Parser[Enum] = flagsHeader ~> bracesList(flagsOption) ^^ {
+    case items => Enum(items, true)
+  }
+
   def enumOption: Parser[Enum.Option] = doc ~ ident ^^ {
-    case doc~ident => Enum.Option(ident, doc)
+    case doc~ident => Enum.Option(ident, doc, None)
+  }
+  def flagsOption: Parser[Enum.Option] = doc ~ ident ~ opt("=" ~> (flagsAll | flagsNone)) ^^ {
+    case doc~ident~None => Enum.Option(ident, doc, None)
+    case doc~ident~Some("all") => Enum.Option(ident, doc, Some(Enum.SpecialFlag.AllFlags))
+    case doc~ident~Some("none") => Enum.Option(ident, doc, Some(Enum.SpecialFlag.NoFlags))
   }
 
   def interfaceHeader = "interface" ~> extInterface
@@ -138,8 +167,9 @@ private object IdlParser extends RegexParsers {
     }
   }
 
-  def externTypeDecl: Parser[TypeDef] = externEnum | externInterface | externRecord
-  def externEnum: Parser[Enum] = enumHeader ^^ { case _ => Enum(List()) }
+  def externTypeDecl: Parser[TypeDef] = externEnum | externFlags | externInterface | externRecord
+  def externEnum: Parser[Enum] = enumHeader ^^ { case _ => Enum(List(), false) }
+  def externFlags: Parser[Enum] = flagsHeader ^^ { case _ => Enum(List(), true) }
   def externRecord: Parser[Record] = recordHeader ~ opt(deriving) ^^ { case ext~deriving => Record(ext, List(), List(), deriving.getOrElse(Set[DerivingType]())) }
   def externInterface: Parser[Interface] = interfaceHeader ^^ { case ext => Interface(None, ext, List(), List()) }
 
@@ -277,31 +307,37 @@ def parseExternFile(externFile: File, inFileListWriter: Option[Writer]) : Seq[Ty
   }
 }
 
+def normalizePath(path: File) : File = {
+  return new File(java.nio.file.Paths.get(path.toString()).normalize().toString())
+}
+
 def parseFile(idlFile: File, inFileListWriter: Option[Writer]): Seq[TypeDecl] = {
+  val normalizedIdlFile = normalizePath(idlFile)
   if (inFileListWriter.isDefined) {
-    inFileListWriter.get.write(idlFile + "\n")
+    inFileListWriter.get.write(normalizedIdlFile + "\n")
   }
 
-  visitedFiles.add(idlFile)
-  fileStack.push(idlFile)
-  val fin = new FileInputStream(idlFile)
+  visitedFiles.add(normalizedIdlFile)
+  fileStack.push(normalizedIdlFile)
+  val fin = new FileInputStream(normalizedIdlFile)
   try {
-    parse(idlFile.getName, new InputStreamReader(fin, "UTF-8")) match {
+    parse(normalizedIdlFile.getName, new InputStreamReader(fin, "UTF-8")) match {
       case Left(err) =>
         System.err.println(err)
         System.exit(1); return null;
       case Right(idl) => {
         var types = idl.typeDecls
         idl.imports.foreach(x => {
-          if (fileStack.contains(x.file)) {
+          val normalized = normalizePath(x.file)
+          if (fileStack.contains(normalized)) {
             throw new AssertionError("Circular import detected!")
           }
-          if (!visitedFiles.contains(x.file)) {
+          if (!visitedFiles.contains(normalized)) {
             x match {
               case IdlFileRef(file) =>
-                types = parseFile(file, inFileListWriter) ++ types
+                types = parseFile(normalized, inFileListWriter) ++ types
               case ExternFileRef(file) =>
-                types = parseExternFile(file, inFileListWriter) ++ types
+                types = parseExternFile(normalized, inFileListWriter) ++ types
             }
           }
         })
